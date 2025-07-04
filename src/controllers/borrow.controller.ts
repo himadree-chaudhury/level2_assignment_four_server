@@ -1,0 +1,105 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import  { NextFunction, Request, Response } from "express";
+import { Borrow } from "../models/borrow.model";
+import { Book } from "../models/book.model";
+
+// *Get all borrows with summary
+export const getAllBorrows = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const summary = await Borrow.aggregate([
+      {
+        $group: {
+          _id: "$book",
+          totalQuantity: { $sum: "$quantity" },
+        },
+      },
+      {
+        $lookup: {
+          from: "books",
+          localField: "_id",
+          foreignField: "_id",
+          as: "book",
+        },
+      },
+      {
+        $unwind: "$book",
+      },
+      {
+        $project: {
+          book: {
+            title: "$book.title",
+            isbn: "$book.isbn",
+          },
+          _id: 0,
+          totalQuantity: 1,
+        },
+      },
+    ]);
+
+    if (summary) {
+      res.status(200).send({
+        success: true,
+        message: "Borrows retrieved successfully",
+        data: summary,
+      });
+    } else {
+      res.status(404).send({
+        success: false,
+        message: "No borrows found",
+      });
+    }
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+
+// *Create a borrow
+export const createBorrow = async (req: Request, res: Response,next: NextFunction) => {
+    const payload = req.body;
+  
+    try {
+      const book = await Book.findById(payload.book);
+  
+      // *Validate book data
+      if (!book) {
+        res.status(404).send({
+          success: false,
+          message: "Book not found",
+        });
+        return;
+      }
+      if (book?.copies < payload.quantity) {
+        {
+          res.status(400).send({
+            success: false,
+            message: "Not enough copies available",
+          });
+        }
+        return;
+      }
+  
+      const borrowData = new Borrow(payload);
+  
+      if (borrowData) {
+        await borrowData.save();
+        // *Update book copies and availability
+        if (book) {
+          book.copies -= payload.quantity;
+          await book.updateAvailability();
+        }
+  
+        res.status(201).send({
+          success: true,
+          message: "Book borrowed successfully",
+          data: borrowData,
+        });
+      }
+    } catch (error: any) {
+      next(error);
+    }
+  };
